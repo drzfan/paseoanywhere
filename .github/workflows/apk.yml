@@ -21,8 +21,6 @@ jobs:
     name: assembleDebug (arm64-v8a)
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    env:
-      MARKERS: ${{ runner.temp }}/markers
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,17 +38,17 @@ jobs:
           cache: bun # 缓存 ~/.bun/install/cache（含 400MB 级预编译原生包）
 
       - name: Setup step markers
-        run: mkdir -p "$MARKERS"
+        run: mkdir -p "$RUNNER_TEMP/markers"
 
       - name: Install dependencies
         run: |
           bun install --frozen-lockfile
-          touch "$MARKERS/01-bun-install.done"
+          touch "$RUNNER_TEMP/markers/01-bun-install.done"
 
       - name: Expo prebuild (CNG -> android/)
         run: |
           bunx expo prebuild -p android --no-install
-          touch "$MARKERS/02-expo-prebuild.done"
+          touch "$RUNNER_TEMP/markers/02-expo-prebuild.done"
 
       # 单 ABI 方案：prebuild 后改 gradle.properties（app.json 的 expo.android
       # schema 在 SDK 56 不支持 abiFilters；而 RNGP / nitro / @runanywhere 都读
@@ -68,7 +66,7 @@ jobs:
           echo '--- sanity ---'
           grep -q '^reactNativeArchitectures=arm64-v8a$' gradle.properties
           grep -q 'Xmx8g' gradle.properties
-          touch "$MARKERS/03-configure-native.done"
+          touch "$RUNNER_TEMP/markers/03-configure-native.done"
 
       # gradle 双缓存之一：恢复点必须在 prebuild 之后（否则残留的 android/
       # 会让 prebuild 行为异常）。save-always：失败构建中已下载的依赖也进缓存。
@@ -95,7 +93,7 @@ jobs:
         run: |
           cd android
           ./gradlew assembleDebug --stacktrace --no-daemon
-          touch "$MARKERS/04-gradle-assemble.done"
+          touch "$RUNNER_TEMP/markers/04-gradle-assemble.done"
 
       - name: Collect APK
         run: |
@@ -114,7 +112,7 @@ jobs:
           retention-days: 30
 
       - name: Mark artifact uploaded
-        run: touch "$MARKERS/05-upload-artifact.done"
+        run: touch "$RUNNER_TEMP/markers/05-upload-artifact.done"
 
       - name: Create GitHub release (tag only)
         if: startsWith(github.ref, 'refs/tags/')
@@ -129,7 +127,7 @@ jobs:
           else
             gh release create "$TAG" --title "paseoanywhere $TAG" --generate-notes "$ASSET"
           fi
-          touch "$MARKERS/06-release.done"
+          touch "$RUNNER_TEMP/markers/06-release.done"
 
       # always() 执行：成功失败都回调监工 agent；失败时靠 marker 文件链
       # 定位死点（每个关键步骤成功后写 marker，此处取最后完成 marker 的下一步）。
@@ -137,6 +135,7 @@ jobs:
         if: always()
         run: |
           set -u
+          MARKERS="$RUNNER_TEMP/markers"
           ORDER=(01-bun-install 02-expo-prebuild 03-configure-native 04-gradle-assemble 05-upload-artifact 06-release)
           last=""; next=""
           for s in "${ORDER[@]}"; do
