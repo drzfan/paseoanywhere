@@ -6,5 +6,5 @@ import * as ExpoCrypto from "expo-crypto";
 const g = globalThis as unknown as { crypto?: Partial<Crypto> };
 if (!g.crypto) g.crypto = {};
 if (!g.crypto.randomUUID) {
-  g.crypto.randomUUID = () => ExpoCrypto.randomUUID();
+  g.crypto.randomUUID = ExpoCrypto.randomUUID as unknown as Crypto["randomUUID"];
 }
