@@ -96,10 +96,27 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME"
           ls "$ANDROID_HOME/ndk" 2>/dev/null || echo "(no preinstalled NDK, AGP will auto-download)"
 
+      # 诊断：两轮 run 均死于 ExpoAutolinkingPlugin 在 projectsEvaluated 时执行的
+      # mirror-kotlin-inline-modules node 调用（exit 1，stderr 被 gradle 吞）。
+      # 在此直接原样执行该命令，让真实报错落进 Actions 日志。
+      - name: Diagnose expo autolinking node call
+        run: |
+          set -x
+          node --version
+          which node
+          printenv | grep -iE '^(CI|NODE|EXPO|JAVA_HOME)=' || true
+          cd android
+          node --no-warnings --eval "require('expo/bin/autolinking')" \
+            expo-modules-autolinking mirror-kotlin-inline-modules \
+            --kotlin-files-mirror-directory "$PWD/node_modules/expo/android/src/main/java/inline/modules" \
+            --inline-modules-list-directory "$PWD/node_modules/expo/android/build/inline/modules" \
+            --watched-directories-serialized '[]'
+          echo "diag-exit=$? (0 = 未复现，看下面 gradle --info)"
+
       - name: Gradle assembleDebug
         run: |
           cd android
-          ./gradlew assembleDebug --stacktrace --no-daemon
+          ./gradlew assembleDebug --stacktrace --info --no-daemon
           touch "$RUNNER_TEMP/markers/04-gradle-assemble.done"
 
       - name: Collect APK
