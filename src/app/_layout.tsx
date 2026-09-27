@@ -1,3 +1,4 @@
+import "../polyfills/crypto";
 import { Pressable, Text, View } from "react-native";
 import { Stack, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
