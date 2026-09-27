@@ -103,7 +103,9 @@ jobs:
           set -euo pipefail
           SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
           if [ ! -d "${ANDROID_HOME}/cmake/3.30.5" ]; then
-            yes | "$SDKMANAGER" --install "cmake;3.30.5" > /dev/null
+            # license 已预接受；|| true 吸收 yes 管道的 SIGPIPE（141），
+            # 真正的成败由末尾 test -d 断言
+            yes | "$SDKMANAGER" --install "cmake;3.30.5" > /dev/null || true
           fi
           ls "${ANDROID_HOME}/cmake"
           test -d "${ANDROID_HOME}/cmake/3.30.5"
