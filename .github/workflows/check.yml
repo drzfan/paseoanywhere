@@ -12,8 +12,6 @@ concurrency:
   group: check-${{ github.ref }}
   cancel-in-progress: true
 
-timeout-minutes: 15
-
 permissions:
   contents: read
 
@@ -21,6 +19,7 @@ jobs:
   check:
     name: typecheck + lint + export:web
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
