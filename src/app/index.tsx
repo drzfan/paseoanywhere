@@ -1,32 +1,26 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect } from "react";
+import { useRouter } from "expo-router";
+import { AgentListScreen } from "../ui/AgentList";
+import { getLastAgentId } from "../settings/storage";
+import { ensureBoot } from "./boot";
 
-export default function HomeScreen() {
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>paseoanywhere</Text>
-      <Text style={styles.subtitle}>voice-first thin client for paseo</Text>
-      <Text style={styles.phase}>P1 scaffold — UI lands in later phases</Text>
-    </View>
-  );
+/** One-shot: cold start jumps straight into the last conversation. */
+let autoRedirectConsumed = false;
+
+export default function ConversationsScreen() {
+  const router = useRouter();
+
+  useEffect(() => {
+    void ensureBoot();
+    if (autoRedirectConsumed) return;
+    autoRedirectConsumed = true;
+    void getLastAgentId().then((agentId) => {
+      // Replace (not push) so Back from the chat returns to this list once.
+      if (agentId) {
+        router.replace({ pathname: "/chat/[agentId]", params: { agentId } });
+      }
+    });
+  }, [router]);
+
+  return <AgentListScreen />;
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-  },
-  subtitle: {
-    fontSize: 14,
-    opacity: 0.7,
-  },
-  phase: {
-    fontSize: 12,
-    opacity: 0.5,
-  },
-});

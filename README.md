@@ -24,18 +24,18 @@ paseo daemon 的语音优先瘦客户端：**语音识别与合成全部在端�
 |---|---|---|
 | **P1** | Expo CNG 脚手架 + 依赖锚定 + 本机 JS 层验收 | ✅ 本仓库 |
 | **P2** | GitHub Actions：push 检查 + 手动 APK 构建（arm64-v8a 单 ABI） | 待做 |
-| **P3** | daemon 对话（`src/protocol`，ws 客户端） | 待做 |
+| **P3** | daemon 对话（`src/protocol`，ws 客户端） | ✅ feat/chat |
 | **P4** | 语音管线（`src/voice` + `src/models`：VAD/STT/TTS） | 待做 |
 
 ## 目录
 
 ```
-src/app/        expo-router 路由页面（占位首页）
-src/ui/         界面组件（聊天视图等，P3+）
-src/protocol/   daemon ws 客户端（P3）
+src/app/        expo-router 路由页面（会话列表/聊天/设置 + boot）
+src/ui/         界面组件（聊天视图、会话列表、主题）
+src/protocol/   daemon ws 客户端（连接管理 + agent 目录 + 对话，P3 已实现）
 src/voice/      语音管线：VAD/STT/TTS（P4）
 src/models/     端侧模型管理（P4）
-src/settings/   设置存储（P3+）
+src/settings/   设置存储（daemon 地址/密码/上次会话，P3 已实现）
 docs/           架构文档
 ```
 
@@ -48,6 +48,12 @@ bun install          # 装依赖（@runanywhere 含预编译原生库，体积�
 bun run typecheck    # tsc --noEmit
 bun run lint         # expo lint
 bun run export:web   # expo export --platform web，纯 JS bundle 验证
+```
+
+协议层 headless 联调（本 VPS 上对着真 daemon 跑）：
+
+```bash
+PA_URL=ws://127.0.0.1:6767/ws PA_PASSWORD=… bun run scripts/e2e-probe.ts
 ```
 
 ## CI（P2 将加）
@@ -66,4 +72,7 @@ bun run export:web   # expo export --platform web，纯 JS bundle 验证
 | @runanywhere/onnx | 0.20.27 | 锁精确 |
 | react-native-nitro-modules | ^0.33.9 | runanywhere 原生桥 |
 | @getpaseo/client | 0.9.2 | 锁精确，对齐 daemon 0.9.2 |
+| @getpaseo/protocol | 0.9.2 | client 的同仓同版协议包，直接 import 其类型（官方 app 同样用法） |
+| @react-native-async-storage/async-storage | 2.2.0 | expo 56 配对版本；密码明文存储 P6 换 secure store |
+| metro.config.js | — | 给 `@getpaseo/*` 的 exports 加 `node` condition（其 import/default 指向未发布的 src/*.ts） |
 | expo-notifications | ~56.0.25 | expo install 自动配对 |
