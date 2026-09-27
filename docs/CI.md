@@ -81,7 +81,16 @@ gh workflow run apk.yml --ref feat/ci        # 或 main / 任意分支
 gh run watch                                 # 或去 Actions 页看
 ```
 
-产物：artifact `apk-debug-arm64-v8a`（30 天），文件名 `paseoanywhere-<ref>-debug-arm64-v8a.apk`。tag（`v*`）触发时额外自动建 GitHub Release 并挂上同一 APK（release 已存在则 `--clobber` 覆盖上传）。
+产物：artifact `apk-debug-arm64-v8a`（30 天），文件名 `paseoanywhere-<ref>-debug-arm64-v8a.apk`（实测 ≈56MB，含预编译语音栈单 ABI jniLibs）。tag（`v*`）触发时额外自动建 GitHub Release 并挂上同一 APK（release 已存在则 `--clobber` 覆盖上传）。
+
+### 踱坑实录（首次通绿的 6 轮迭代，后续工程师必读）
+
+1. **workflow 顶层 `env:` 不支持 `runner` 上下文**（只认 github/inputs）→ 用 run 步骤内的 `$RUNNER_TEMP` 进程变量代替。
+2. **`timeout-minutes` 是 job 级键**，写在 workflow 顶层会被直接拒（无 job 记录的裸 failure）。
+3. **expo 的 properties 序列化器末行不写 `\n`**（`propertiesListToString` 只在行间补 `\n`）。prebuild 会把 `expo.inlineModules.watchedDirectories=[]` 写成末行；对 gradle.properties 任何 `>>` 追加前必须先补尾换行，否则粘连成 `[]org.gradle.caching=true`，expo-autolinking 的 `mirror-kotlin-inline-modules` 在 `projectsEvaluated` 时 `JSON.parse` 爆炸、node exit 1，而 gradle `providers.exec` 会吞掉 stderr，Actions 日志只剩退出码（三轮 CI 死于此）。
+4. **@runanywhere/{core,onnx} 的 CMake 声明 `version "3.30.5"`**，runner 镜像只预装 3.22.1（其它 RN 模块都用默认），不预装则 `[CXX1300] CMake 3.30.5 not found` 秒败。workflow 里有幂等安装步骤；`yes |` 管道在 `set -o pipefail` 下会因 SIGPIPE 报 141，需 `|| true` 吸收并用 `test -d` 断言真成败。
+5. **诊断手法**：gradle 步骤前的 Diagnose 步骤原样执行 autolinking mirror 命令（取参、路径与 gradle 完全一致，属性值直接读 gradle.properties），stderr 直落 Actions 日志；gradle 命令带 `--info` 可看到它构造的完整命令行——两者组合把被吞的报错撞了出来。
+6. 排除项：node 版本不是问题（runner 与本机同为 v22.23.2）；bun 的 node_modules 布局也不是（本地忠实复刻成功，唯一变量是属性值被粘连）。
 
 ### webhook 通知协议
 

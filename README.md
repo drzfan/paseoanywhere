@@ -23,7 +23,7 @@ paseo daemon 的语音优先瘦客户端：**语音识别与合成全部在端�
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | **P1** | Expo CNG 脚手架 + 依赖锚定 + 本机 JS 层验收 | ✅ 本仓库 |
-| **P2** | GitHub Actions：push 检查 + 手动 APK 构建（arm64-v8a 单 ABI） | 待做 |
+| **P2** | GitHub Actions：push 检查 + 手动 APK 构建（arm64-v8a 单 ABI） | ✅ `feat/ci`（[CI 文档](docs/CI.md)） |
 | **P3** | daemon 对话（`src/protocol`，ws 客户端） | ✅ feat/chat |
 | **P4** | 语音管线（`src/voice` + `src/models`：VAD/STT/TTS） | 待做 |
 
