@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   apk:
-    name: assembleDebug (arm64-v8a)
+    name: assembleRelease (arm64-v8a, bundle嵌入)
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -66,6 +66,8 @@ jobs:
           # autolinking JSON.parse 炸 -> configure 期 node exit 1（三轮 CI 死因）。
           if [ -n "$(tail -c 1 gradle.properties)" ]; then echo >> gradle.properties; fi
           grep -q '^org.gradle.caching=' gradle.properties || echo 'org.gradle.caching=true' >> gradle.properties
+          # release 变体内嵌 JS bundle（debug 不内嵌、启动等 Metro）；R8 保持关闭防巨库 OOM
+          grep -q '^enableMinifyInReleaseBuilds=' gradle.properties || echo 'enableMinifyInReleaseBuilds=false' >> gradle.properties
           echo '--- effective settings ---'
           grep -E '^(reactNativeArchitectures|org.gradle.jvmargs|org.gradle.caching|org.gradle.parallel|expo.inlineModules.watchedDirectories)=' gradle.properties
           echo '--- sanity ---'
@@ -127,10 +129,10 @@ jobs:
             --watched-directories-serialized "$WD"
           echo "diag-exit=$?"
 
-      - name: Gradle assembleDebug
+      - name: Gradle assembleRelease
         run: |
           cd android
-          ./gradlew assembleDebug --stacktrace --info --no-daemon
+          ./gradlew assembleRelease --stacktrace --info --no-daemon
           touch "$RUNNER_TEMP/markers/04-gradle-assemble.done"
 
       - name: Collect APK
@@ -138,13 +140,13 @@ jobs:
           set -euo pipefail
           REF="$(echo '${{ github.ref_name }}' | tr '/' '-')"
           mkdir -p apk
-          cp android/app/build/outputs/apk/debug/app-debug.apk "apk/paseoanywhere-${REF}-debug-arm64-v8a.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "apk/paseoanywhere-${REF}-release-arm64-v8a.apk"
           ls -lh apk/
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: apk-debug-arm64-v8a
+          name: apk-release-arm64-v8a
           path: apk/*.apk
           if-no-files-found: error
           retention-days: 30
@@ -159,7 +161,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ github.ref_name }}"
-          ASSET="apk/paseoanywhere-${TAG}-debug-arm64-v8a.apk"
+          ASSET="apk/paseoanywhere-${TAG}-release-arm64-v8a.apk"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$ASSET" --clobber
           else
