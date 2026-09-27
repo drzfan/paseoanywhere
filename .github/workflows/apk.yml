@@ -1,0 +1,174 @@
+name: apk
+
+# 原生编译只发生在 CI（项目铁律）。debug 构建先行：无 R8/minify，
+# 双缓存（bun + gradle）+ arm64-v8a 单 ABI + 360 分钟超时，
+# 对抗历史坟场：dex/R8 对 400MB 级预编译库 OOM/超时六连败。
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # tag 触发时 gh release create 需要
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    name: assembleDebug (arm64-v8a)
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      MARKERS: ${{ runner.temp }}/markers
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK (temurin 21)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+          cache: bun # 缓存 ~/.bun/install/cache（含 400MB 级预编译原生包）
+
+      - name: Setup step markers
+        run: mkdir -p "$MARKERS"
+
+      - name: Install dependencies
+        run: |
+          bun install --frozen-lockfile
+          touch "$MARKERS/01-bun-install.done"
+
+      - name: Expo prebuild (CNG -> android/)
+        run: |
+          bunx expo prebuild -p android --no-install
+          touch "$MARKERS/02-expo-prebuild.done"
+
+      # 单 ABI 方案：prebuild 后改 gradle.properties（app.json 的 expo.android
+      # schema 在 SDK 56 不支持 abiFilters；而 RNGP / nitro / @runanywhere 都读
+      # reactNativeArchitectures 属性）。同时把 gradle 堆从模板默认 2g 提到 8g，
+      # 防巨型库 dex OOM；开 build cache 加速全量重来的 CNG 构建。
+      - name: Configure native build (single ABI + heap)
+        run: |
+          set -euo pipefail
+          cd android
+          sed -i 's/^reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' gradle.properties
+          sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx8g -XX:MaxMetaspaceSize=1g/' gradle.properties
+          grep -q '^org.gradle.caching=' gradle.properties || echo 'org.gradle.caching=true' >> gradle.properties
+          echo '--- effective settings ---'
+          grep -E '^(reactNativeArchitectures|org.gradle.jvmargs|org.gradle.caching|org.gradle.parallel)=' gradle.properties
+          echo '--- sanity ---'
+          grep -q '^reactNativeArchitectures=arm64-v8a$' gradle.properties
+          grep -q 'Xmx8g' gradle.properties
+          touch "$MARKERS/03-configure-native.done"
+
+      # gradle 双缓存之一：恢复点必须在 prebuild 之后（否则残留的 android/
+      # 会让 prebuild 行为异常）。save-always：失败构建中已下载的依赖也进缓存。
+      - name: Restore gradle caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            android/.gradle
+            android/build
+            android/app/build
+          key: gradle-${{ runner.os }}-${{ hashFiles('bun.lock') }}-v1
+          restore-keys: |
+            gradle-${{ runner.os }}-
+          save-always: true
+
+      - name: Show Android SDK info
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/ndk" 2>/dev/null || echo "(no preinstalled NDK, AGP will auto-download)"
+
+      - name: Gradle assembleDebug
+        run: |
+          cd android
+          ./gradlew assembleDebug --stacktrace --no-daemon
+          touch "$MARKERS/04-gradle-assemble.done"
+
+      - name: Collect APK
+        run: |
+          set -euo pipefail
+          REF="$(echo '${{ github.ref_name }}' | tr '/' '-')"
+          mkdir -p apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk "apk/paseoanywhere-${REF}-debug-arm64-v8a.apk"
+          ls -lh apk/
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-debug-arm64-v8a
+          path: apk/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Mark artifact uploaded
+        run: touch "$MARKERS/05-upload-artifact.done"
+
+      - name: Create GitHub release (tag only)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          ASSET="apk/paseoanywhere-${TAG}-debug-arm64-v8a.apk"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ASSET" --clobber
+          else
+            gh release create "$TAG" --title "paseoanywhere $TAG" --generate-notes "$ASSET"
+          fi
+          touch "$MARKERS/06-release.done"
+
+      # always() 执行：成功失败都回调监工 agent；失败时靠 marker 文件链
+      # 定位死点（每个关键步骤成功后写 marker，此处取最后完成 marker 的下一步）。
+      - name: Notify agent
+        if: always()
+        run: |
+          set -u
+          ORDER=(01-bun-install 02-expo-prebuild 03-configure-native 04-gradle-assemble 05-upload-artifact 06-release)
+          last=""; next=""
+          for s in "${ORDER[@]}"; do
+            if [ -f "$MARKERS/$s.done" ]; then last="$s"; else next="$s"; break; fi
+          done
+          STATUS='${{ job.status }}'
+          if [ "$STATUS" = 'success' ]; then
+            failed=""
+          elif [ -n "$next" ]; then
+            failed="$next"
+          elif [ -n "$last" ]; then
+            failed="after-$last (post/cleanup step)"
+          else
+            failed="setup (before bun install)"
+          fi
+          {
+            echo "## APK build: ${STATUS}"
+            echo ""
+            echo "- ref: \`${{ github.ref_name }}\`"
+            echo "- last completed step: \`${last:-none}\`"
+            echo "- failed_step: \`${failed:-—}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          payload=$(jq -n \
+            --arg event "apk_build" \
+            --arg status "$STATUS" \
+            --arg run "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg failed_step "$failed" \
+            --arg ref "${{ github.ref_name }}" \
+            '{event:$event,status:$status,run:$run,failed_step:$failed_step,ref:$ref}' \
+            || echo '{"event":"apk_build","status":"notify-degraded","failed_step":"jq-payload-failure"}')
+          curl -sS --max-time 30 --retry 3 --retry-all-errors -X POST "${{ secrets.HOOK_URL }}" \
+            -H "Authorization: Bearer ${{ secrets.HOOK_TOKEN }}" \
+            -H "X-Hook-Source: paseoanywhere-ci" \
+            -H "Content-Type: application/json" \
+            -d "$payload"
