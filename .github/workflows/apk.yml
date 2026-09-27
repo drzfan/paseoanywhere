@@ -60,19 +60,19 @@ jobs:
           cd android
           sed -i 's/^reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' gradle.properties
           sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx8g -XX:MaxMetaspaceSize=1g/' gradle.properties
+          # 关键：expo 的 properties 序列化器（propertiesListToString）末行不写 \n，
+          # prebuild 写完 expo.inlineModules.watchedDirectories=[] 后文件无尾换行；
+          # 不补换行就 >> 追加会粘连成 "[]org.gradle.caching=true"，
+          # autolinking JSON.parse 炸 -> configure 期 node exit 1（三轮 CI 死因）。
+          if [ -n "$(tail -c 1 gradle.properties)" ]; then echo >> gradle.properties; fi
           grep -q '^org.gradle.caching=' gradle.properties || echo 'org.gradle.caching=true' >> gradle.properties
-          # expo-modules-autolinking 在 projectsEvaluated 时跑 mirror-kotlin-inline-modules，
-          # 其 --watched-directories-serialized 取值来自本属性；未设置时 Kotlin 侧传
-          # emptyList，Gradle 摊平成 0 个参数，commander 报 argument missing 退出 1
-          # （SDK 56.0.x CNG 全新构建必触发，无公开先例，自行定位）。
-          grep -q '^expo.inlineModules.watchedDirectories=' gradle.properties \
-            || echo 'expo.inlineModules.watchedDirectories=[]' >> gradle.properties
           echo '--- effective settings ---'
-          grep -E '^(reactNativeArchitectures|org.gradle.jvmargs|org.gradle.caching|org.gradle.parallel)=' gradle.properties
+          grep -E '^(reactNativeArchitectures|org.gradle.jvmargs|org.gradle.caching|org.gradle.parallel|expo.inlineModules.watchedDirectories)=' gradle.properties
           echo '--- sanity ---'
           grep -q '^reactNativeArchitectures=arm64-v8a$' gradle.properties
           grep -q 'Xmx8g' gradle.properties
-          grep -q '^expo.inlineModules.watchedDirectories=' gradle.properties
+          # prebuild 自带写入该属性（withInlineModules 插件），校验它未被粘连污染
+          grep -q '^expo.inlineModules.watchedDirectories=\[\]$' gradle.properties
           touch "$RUNNER_TEMP/markers/03-configure-native.done"
 
       # gradle 双缓存之一：恢复点必须在 prebuild 之后（否则残留的 android/
@@ -96,22 +96,22 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME"
           ls "$ANDROID_HOME/ndk" 2>/dev/null || echo "(no preinstalled NDK, AGP will auto-download)"
 
-      # 诊断：两轮 run 均死于 ExpoAutolinkingPlugin 在 projectsEvaluated 时执行的
-      # mirror-kotlin-inline-modules node 调用（exit 1，stderr 被 gradle 吞）。
-      # 在此直接原样执行该命令，让真实报错落进 Actions 日志。
+      # 诊断（保留至出包）：原样执行 ExpoAutolinkingPlugin 在 projectsEvaluated 时
+      # 跑的 mirror 命令，路径/取参与 gradle 完全一致（属性值直接读 gradle.properties），
+      # 让 node 真实报错落进 Actions 日志。
       - name: Diagnose expo autolinking node call
         run: |
           set -x
           node --version
-          which node
-          printenv | grep -iE '^(CI|NODE|EXPO|JAVA_HOME)=' || true
           cd android
+          WD="$(grep '^expo.inlineModules.watchedDirectories=' gradle.properties | cut -d= -f2-)"
+          echo "watchedDirectories property value: [$WD]"
           node --no-warnings --eval "require('expo/bin/autolinking')" \
             expo-modules-autolinking mirror-kotlin-inline-modules \
-            --kotlin-files-mirror-directory "$PWD/node_modules/expo/android/src/main/java/inline/modules" \
-            --inline-modules-list-directory "$PWD/node_modules/expo/android/build/inline/modules" \
-            --watched-directories-serialized '[]'
-          echo "diag-exit=$? (0 = 未复现，看下面 gradle --info)"
+            --kotlin-files-mirror-directory "$GITHUB_WORKSPACE/node_modules/expo/android/src/main/java/inline/modules" \
+            --inline-modules-list-directory "$GITHUB_WORKSPACE/node_modules/expo/android/build/inline/modules" \
+            --watched-directories-serialized "$WD"
+          echo "diag-exit=$?"
 
       - name: Gradle assembleDebug
         run: |
