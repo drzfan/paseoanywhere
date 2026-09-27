@@ -96,6 +96,18 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME"
           ls "$ANDROID_HOME/ndk" 2>/dev/null || echo "(no preinstalled NDK, AGP will auto-download)"
 
+      # @runanywhere/* 的 externalNativeBuild 声明 cmake version "3.30.5"，
+      # runner 镜像只预装 3.22.1（其余 RN 模块都用它）；不预装则 CXX1300 秒败。
+      - name: Ensure CMake 3.30.5 (required by @runanywhere modules)
+        run: |
+          set -euo pipefail
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -d "${ANDROID_HOME}/cmake/3.30.5" ]; then
+            yes | "$SDKMANAGER" --install "cmake;3.30.5" > /dev/null
+          fi
+          ls "${ANDROID_HOME}/cmake"
+          test -d "${ANDROID_HOME}/cmake/3.30.5"
+
       # 诊断（保留至出包）：原样执行 ExpoAutolinkingPlugin 在 projectsEvaluated 时
       # 跑的 mirror 命令，路径/取参与 gradle 完全一致（属性值直接读 gradle.properties），
       # 让 node 真实报错落进 Actions 日志。
