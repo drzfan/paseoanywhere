@@ -61,11 +61,18 @@ jobs:
           sed -i 's/^reactNativeArchitectures=.*/reactNativeArchitectures=arm64-v8a/' gradle.properties
           sed -i 's/^org.gradle.jvmargs=.*/org.gradle.jvmargs=-Xmx8g -XX:MaxMetaspaceSize=1g/' gradle.properties
           grep -q '^org.gradle.caching=' gradle.properties || echo 'org.gradle.caching=true' >> gradle.properties
+          # expo-modules-autolinking 在 projectsEvaluated 时跑 mirror-kotlin-inline-modules，
+          # 其 --watched-directories-serialized 取值来自本属性；未设置时 Kotlin 侧传
+          # emptyList，Gradle 摊平成 0 个参数，commander 报 argument missing 退出 1
+          # （SDK 56.0.x CNG 全新构建必触发，无公开先例，自行定位）。
+          grep -q '^expo.inlineModules.watchedDirectories=' gradle.properties \
+            || echo 'expo.inlineModules.watchedDirectories=[]' >> gradle.properties
           echo '--- effective settings ---'
           grep -E '^(reactNativeArchitectures|org.gradle.jvmargs|org.gradle.caching|org.gradle.parallel)=' gradle.properties
           echo '--- sanity ---'
           grep -q '^reactNativeArchitectures=arm64-v8a$' gradle.properties
           grep -q 'Xmx8g' gradle.properties
+          grep -q '^expo.inlineModules.watchedDirectories=' gradle.properties
           touch "$RUNNER_TEMP/markers/03-configure-native.done"
 
       # gradle 双缓存之一：恢复点必须在 prebuild 之后（否则残留的 android/
